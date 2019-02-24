@@ -1,0 +1,828 @@
+
+// FRAGMENT SHADER FOR SHADERTOY
+// Run this at https://www.shadertoy.com/new
+// See documentation at https://www.shadertoy.com/howto
+
+// Your browser must support WebGL 2.0.
+// Check your browser at http://webglreport.com/?v=2
+
+
+//============================================================================
+// Constants.
+//============================================================================
+#define S(a,b,t) smoothstep(a,b,t)
+const int NUM_LIGHTS = 2;
+const int NUM_MATERIALS =6;
+const int NUM_PLANES = 5;
+const int NUM_SPHERES = 5;
+const float pi=3.1415926;
+const vec3 BACKGROUND_COLOR = vec3(0.1, 0.2, 0.6);
+
+// Vertical field-of-view angle of camera. In radians.
+const float FOVY = 50.0 * 3.1415926535 / 180.0;
+
+// Use this for avoiding the "epsilon problem" or the shadow acne problem.
+const float DEFAULT_TMIN = 10.0e-4;
+
+// Use this for tmax for non-shadow ray intersection test.
+const float DEFAULT_TMAX = 10.0e6;
+
+// Equivalent to number of recursion levels (0 means ray-casting only).
+// We are using iterations to replace recursions.
+const int NUM_ITERATIONS = 2;
+
+
+
+
+//============================================================================
+// Define new struct types.
+//============================================================================
+struct Ray_t {
+	vec3 o;  // Ray Origin.
+	vec3 d;  // Ray Direction. A unit vector.
+};
+
+struct Plane_t {
+	// The plane equation is Ax + By + Cz + D = 0.
+	float A, B, C, D;
+	int materialID;
+};
+
+struct Sphere_t {
+	vec3 center;
+	float radius;
+	int materialID;
+};
+
+struct Light_t
+{
+	vec3 position;  // Point light 3D position.
+	vec3 I_a;       // For Ambient.
+	vec3 I_source;  // For Diffuse and Specular.
+};
+
+struct Material_t {
+	vec3 k_a;   // Ambient coefficient.
+	vec3 k_d;   // Diffuse coefficient.
+	vec3 k_r;   // Reflected specular coefficient.
+	vec3 k_rg;  // Global reflection coefficient.
+	float n;    // The specular reflection exponent. Ranges from 0.0 to 128.0. 
+};
+
+//----------------------------------------------------------------------------
+// The lighting model used here is similar to that on Slides 8 and 12 of 
+// Lecture 11 (Ray Tracing). Here it is computed as
+//
+//     I_local = SUM_OVER_ALL_LIGHTS { 
+//                   I_a * k_a + 
+//                   k_shadow * I_source * [ k_d * (N.L) + k_r * (R.V)^n ]
+//               }
+// and
+//     I = I_local  +  k_rg * I_reflected
+//----------------------------------------------------------------------------
+
+
+//============================================================================
+// Global scene data.
+//============================================================================
+Plane_t Plane[NUM_PLANES];
+Sphere_t Sphere[NUM_SPHERES];
+Light_t Light[NUM_LIGHTS];
+Material_t Material[NUM_MATERIALS];
+
+
+
+/////////////////////////////////////////////////////////////////////////////
+// Initializes the scene.
+/////////////////////////////////////////////////////////////////////////////
+void InitScene()
+{
+	// Horizontal plane.
+	Plane[0].A = 0.0;
+	Plane[0].B = 1.0;
+	Plane[0].C = 0.0;
+	Plane[0].D = 0.0;
+	Plane[0].materialID = 0;
+
+	// Vertical plane.
+	Plane[1].A = 0.0;
+	Plane[1].B = 0.0;
+	Plane[1].C = 0.5;
+	Plane[1].D = 3.5;
+	Plane[1].materialID = 0;
+    
+    Plane[2].A = 0.5;
+	Plane[2].B = 0.0;
+	Plane[2].C = 0.0;
+	Plane[2].D = 3.5;
+	Plane[2].materialID = 0;
+    
+    Plane[3].A = 0.0;
+	Plane[3].B = 0.0;
+	Plane[3].C = -0.5;
+	Plane[3].D = 3.5;
+	Plane[3].materialID = 0;
+	
+    Plane[4].A = -0.5;
+	Plane[4].B = 0.0;
+	Plane[4].C = 0.0;
+	Plane[4].D = 3.5;
+	Plane[4].materialID = 0;
+	// Center bouncing sphere.
+	Sphere[0].center = vec3(0.0, abs(cos(1.7 * iTime)) + 1.0, 0.0);
+	Sphere[0].radius = 1.0;
+	Sphere[0].materialID = 0;
+    
+    
+	//small balls
+    if(iTime<5.0*pi)
+    {
+    Sphere[1].center = vec3(-1.2 * cos(3.0*iTime),2.0*abs(sin(2.0* iTime))+0.1 ,1.2 * sin(3.0*iTime));
+	Sphere[1].radius = 0.1;
+	Sphere[1].materialID = 1;
+    
+    
+   
+
+    Sphere[3].center = vec3(1.2 * cos(3.0*iTime),2.0*abs(cos(1.5* iTime))+0.1 ,1.2 * sin(3.0*iTime));
+	Sphere[3].radius = 0.1;
+	Sphere[3].materialID = 3;
+
+    
+    
+    }
+    // Circling sphere.
+    else
+    {
+    Sphere[1].center = vec3(-1.2 * cos(3.0*iTime),2.0*abs(sin(2.0* iTime))+0.1 ,1.2 * sin(3.0*iTime));
+	Sphere[1].radius = 0.1;
+	Sphere[1].materialID = 1;
+        
+    
+    
+    Sphere[3].center = vec3(1.2 * cos(15.0*pi),(2.0*abs(sin(7.5*pi))+1.1)*abs(sin(2.0*iTime)),1.2 * sin(15.0*pi));
+	Sphere[3].radius = 0.1;
+	Sphere[3].materialID = 3;
+    }
+    Sphere[4].center = vec3(1.2 * cos(3.0*iTime),2.0*abs(sin(2.5* iTime))+0.1 ,-1.2 * sin(3.0*iTime));
+	Sphere[4].radius = 0.1;
+    Sphere[4].materialID = 5;
+    
+    	
+    Sphere[2].center = vec3(-1.2 * cos(15.0*pi),(2.0*abs(cos(5.0*pi))+1.1)*abs(sin(2.0*iTime)) ,-1.2 * sin(15.0*pi));
+	Sphere[2].radius = 0.1;
+	Sphere[2].materialID = 2;   
+        
+   
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+	// Silver material.
+	Material[0].k_d = vec3(0.1, 0.1, 0.1);
+	Material[0].k_a = 0.2 * Material[0].k_d;
+	Material[0].k_r =2.0 * Material[0].k_d;
+	Material[0].k_rg = 0.5 * Material[0].k_r;
+	Material[0].n = 64.0;
+
+	// Gold material.
+	Material[1].k_d = vec3(1.0, 0.7, 0.4);
+	Material[1].k_a = 0.2 * Material[1].k_d;
+	Material[1].k_r = 2.0 * Material[1].k_d;
+	Material[1].k_rg = 0.5 * Material[1].k_r;
+	Material[1].n = 64.0;
+
+	// Green plastic material.
+	Material[2].k_d = vec3(1.0, 0.39, 0.25);
+	Material[2].k_a = 0.2 * Material[2].k_d;
+	Material[2].k_r = vec3(0.5, 1.0, 2.0);
+	Material[2].k_rg = 0.2 * Material[2].k_r;
+	Material[2].n = 128.0;
+    
+    Material[3].k_d = vec3(0.8, 0.36, 0.36);
+	Material[3].k_a = 0.2 * Material[3].k_d;
+	Material[3].k_r = vec3(0.5, 1.0, 2.0);
+	Material[3].k_rg = 0.2 * Material[3].k_r;
+	Material[3].n = 128.0;
+    
+    Material[4].k_d = vec3(1.0, 0.6, 0.8);
+	Material[4].k_a = 0.2 * Material[4].k_d;
+	Material[4].k_r = vec3(0.5, 1.0, 2.0);
+	Material[4].k_rg = 0.2 * Material[4].k_r;
+	Material[4].n = 128.0;
+	
+    Material[5].k_d = vec3(1.0, 1.0, 0.6);
+	Material[5].k_a = 0.2 * Material[5].k_d;
+	Material[5].k_r = vec3(0.5, 1.0, 2.0);
+	Material[5].k_rg = 0.5 * Material[5].k_r;
+	Material[5].n = 64.0;
+    
+    
+    
+    
+    // Light 0.
+	Light[0].position = vec3(4.0, 3.0, -3.0);
+	Light[0].I_a = vec3(0.05, 0.05, 0.05);
+	Light[0].I_source = vec3(1.0,1.0,1.0);
+
+	// Light 1.
+	Light[1].position = vec3(4.0,4.0,0.0 );
+	Light[1].I_a = vec3(0.08, 0.08, 0.08);
+	Light[1].I_source = vec3(1.0, 1.0, 1.0);
+    
+    
+    
+}
+
+
+float DistLine(vec2 p,vec2 a,vec2 b)    //point start point end
+{
+	vec2 pa=p-a;
+	vec2 ba=b-a;
+	float t=clamp(dot(pa,ba)/dot(ba,ba),0.,1.);
+	return length(pa-ba*t);
+}
+//get random number
+float N21(vec2 p)
+{
+	p=fract(p*vec2(12.45,6.78));
+	p+=dot(p,p+12.32);
+	return fract(p.x*p.y);
+}
+vec2 N22(vec2 p)
+{
+	float n=N21(p);
+	return vec2(n,N21(p+n));
+}
+vec2 GetPos(vec2 id,vec2 offset)
+{
+	vec2 n=N22(id+offset)*iTime;
+	return offset+sin(n)*.4;
+}
+float Line(vec2 p,vec2 a,vec2 b)
+{
+	float d=DistLine(p,a,b);
+	float m=S(.03,.01,d);
+	m*= S(1.2,.8,length(a-b));
+	return m;
+}
+
+
+/////////////////////////////////////////////////////////////////////////////
+// Computes intersection between a plane and a ray.
+// Returns true if there is an intersection where the ray parameter t is
+// between tmin and tmax, otherwise returns false.
+// If there is such an intersection, outputs the value of t, the position
+// of the intersection (hitPos) and the normal vector at the intersection 
+// (hitNormal).
+/////////////////////////////////////////////////////////////////////////////
+bool IntersectPlane(in Plane_t pln, in Ray_t ray, in float tmin, in float tmax,
+	out float t, out vec3 hitPos, out vec3 hitNormal)
+{
+	vec3 N = vec3(pln.A, pln.B, pln.C);
+	float NRd = dot(N, ray.d);
+	float NRo = dot(N, ray.o);
+	float t0 = (-pln.D - NRo) / NRd;
+	if (t0 < tmin || t0 > tmax) return false;
+
+	// We have a hit -- output results.
+	t = t0;
+	hitPos = ray.o + t0 * ray.d;
+	hitNormal = normalize(N);
+	return true;
+}
+
+vec3 textureBox( sampler2D sam, in vec3 pos, in vec3 nor )
+{
+    vec3 w = abs(nor);
+    return (w.x*texture( sam, pos.yz ).xyz + 
+            w.y*texture( sam, pos.zx ).xyz + 
+            w.z*texture( sam, pos.xy ).xyz ) / (w.x+w.y+w.z);
+}
+float RaySphere( vec3 rayOrigin, vec3 rayDir, vec3 spherePos, float sphereRadius )
+{
+	vec3 oc = rayOrigin - spherePos;
+	
+	float b = dot( oc, rayDir );
+	float c = dot( oc, oc ) - sphereRadius * sphereRadius;
+	float h = b * b - c;
+	float t;
+	if ( h < 0.0 )
+		t = -1.0;
+	else
+		t = ( -b - sqrt( h ) );
+	return t;
+}
+
+/////////////////////////////////////////////////////////////////////////////
+// Computes intersection between a plane and a ray.
+// Returns true if there is an intersection where the ray parameter t is
+// between tmin and tmax, otherwise returns false.
+/////////////////////////////////////////////////////////////////////////////
+bool IntersectPlane(in Plane_t pln, in Ray_t ray, in float tmin, in float tmax)
+{
+	vec3 N = vec3(pln.A, pln.B, pln.C);
+	float NRd = dot(N, ray.d);
+	float NRo = dot(N, ray.o);
+	float t0 = (-pln.D - NRo) / NRd;
+	if (t0 < tmin || t0 > tmax) return false;
+	return true;
+}
+
+
+
+/////////////////////////////////////////////////////////////////////////////
+// Computes intersection between a sphere and a ray.
+// Returns true if there is an intersection where the ray parameter t is
+// between tmin and tmax, otherwise returns false.
+// If there is one or two such intersections, outputs the value of the 
+// smaller t, the position of the intersection (hitPos) and the normal 
+// vector at the intersection (hitNormal).
+/////////////////////////////////////////////////////////////////////////////
+bool IntersectSphere(in Sphere_t sph, in Ray_t ray, in float tmin, in float tmax,
+	out float t, out vec3 hitPos, out vec3 hitNormal)
+{
+	/////////////////////////////////
+	float a=1.0;
+	float b=2.0*dot(ray.d,(ray.o-sph.center));
+	float c = dot((ray.o - sph.center), (ray.o - sph.center)) - sph.radius * sph.radius;
+    float d = b * b - 4.0 * a * c;
+	if(d<0.0)
+		return false;
+	float t0 = (-b - sqrt(d)) / (2.0 * a);
+	float t1 = (-b + sqrt(d)) / (2.0 * a);
+	if (t0 < tmin || t0 > tmax)
+	{
+		if (t1 < tmin || t1 > tmax)
+			return false;
+		t = t1;
+	}
+	else
+		t = t0;
+	hitPos = ray.o + t * ray.d;
+	hitNormal = normalize(ray.o - sph.center + t0 * ray.d );
+	return true;
+	/////////////////////////////////
+
+
+}
+
+
+
+/////////////////////////////////////////////////////////////////////////////
+// Computes intersection between a sphere and a ray.
+// Returns true if there is an intersection where the ray parameter t is
+// between tmin and tmax, otherwise returns false.
+/////////////////////////////////////////////////////////////////////////////
+bool IntersectSphere(in Sphere_t sph, in Ray_t ray, in float tmin, in float tmax)
+{
+	/////////////////////////////////
+	float a=1.0;
+	float b=2.0*dot(ray.d,(ray.o-sph.center));
+	float c = dot((ray.o - sph.center), (ray.o - sph.center)) - sph.radius * sph.radius;
+    float d = b * b - 4.0 * a * c;
+	if(d<0.0)
+		return false;
+	float t0 = (-b - sqrt(d)) / (2.0 * a);
+	float t1 = (-b + sqrt(d)) / (2.0 * a);
+	if (t0 < tmin || t0 > tmax)
+	{
+		if (t1 < tmin || t1 > tmax)
+			return false;
+	}
+	return true;
+	/////////////////////////////////
+}
+
+
+/////////////////////////////////////////////////////////////////////////////
+// Computes (I_a * k_a) + k_shadow * I_source * [ k_d * (N.L) + k_r * (R.V)^n ].
+// Input vectors L, N and V are pointing AWAY from surface point.
+// Assume all vectors L, N and V are unit vectors.
+/////////////////////////////////////////////////////////////////////////////
+vec3 PhongLighting(in vec3 L, in vec3 N, in vec3 V, in bool inShadow,
+	in Material_t mat, in Light_t light)
+{
+	if (inShadow) {
+		return light.I_a * mat.k_a;
+	}
+	else {
+		vec3 R = reflect(-L, N);
+		float N_dot_L = max(0.0, dot(N, L));
+		float R_dot_V = max(0.0, dot(R, V));
+		float R_dot_V_pow_n = (R_dot_V == 0.0) ? 0.0 : pow(R_dot_V, mat.n);
+
+		return light.I_a * mat.k_a +
+			light.I_source * (mat.k_d * N_dot_L + mat.k_r * R_dot_V_pow_n);
+	}
+}
+
+vec3 Lighting(in vec3 L, in vec3 N, in vec3 V, in bool inShadow,
+	in vec3 diffuseColor, in Light_t light)
+{
+	if (inShadow) {
+		return light.I_a;
+	}
+	else {
+		vec3 R = reflect(-L, N);
+		float N_dot_L = max(0.0, dot(N, L));
+		float R_dot_V = max(0.0, dot(R, V));
+		float R_dot_V_pow_n = (R_dot_V == 0.0) ? 0.0 : pow(R_dot_V, 0.0);
+
+		return light.I_a  +
+			light.I_source * (diffuseColor * N_dot_L + diffuseColor * R_dot_V_pow_n);
+	}
+}
+
+
+/////////////////////////////////////////////////////////////////////////////
+// Casts a ray into the scene and returns color computed at the nearest
+// intersection point. The color is the sum of light from all light sources,
+// each computed using Phong Lighting Model, with consideration of
+// whether the interesection point is being shadowed from the light.
+// If there is no interesection, returns the background color, and outputs
+// hasHit as false.
+// If there is intersection, returns the computed color, and outputs
+// hasHit as true, the 3D position of the intersection (hitPos), the
+// normal vector at the intersection (hitNormal), and the k_rg value
+// of the material of the intersected object.
+/////////////////////////////////////////////////////////////////////////////
+vec3 CastRay(in Ray_t ray,
+	out bool hasHit, out vec3 hitPos, out vec3 hitNormal, out vec3 k_rg)
+{
+	// Find whether and where the ray hits some object. 
+	// Take the nearest hit point.
+
+	bool hasHitSomething = false;
+    bool hasHitPlane=false;
+	bool hasHitPlanexy=false;
+	bool hasHitPlaneyz=false;
+	bool hasHitMainSphere=false;
+	float nearest_t = DEFAULT_TMAX;   // The ray parameter t at the nearest hit point.
+	vec3 nearest_hitPos;              // 3D position of the nearest hit point.
+	vec3 nearest_hitNormal;           // Normal vector at the nearest hit point.
+	int nearest_hitMatID;             // MaterialID of the object at the nearest hit point.
+
+	float temp_t;
+	vec3 temp_hitPos;
+	vec3 temp_hitNormal;
+	bool temp_hasHit;
+    bool temp_hitPlane;
+	bool temp_hitMainSphere;
+	bool temp_hitPlanexy;
+	bool temp_hitPlaneyz;
+	/////////////////////////////////////////////////////////////////////////////
+	// TASK:
+	// * Try interesecting input ray with all the planes and spheres,
+	//   and record the front-most (nearest) interesection.
+	// * If there is interesection, need to record hasHitSomething,
+	//   nearest_t, nearest_hitPos, nearest_hitNormal, nearest_hitMatID.
+	/////////////////////////////////////////////////////////////////////////////
+
+	/////////////////////////////////
+	for (int i = 0;i < NUM_SPHERES;i++)
+	{
+		if (IntersectSphere(Sphere[i], ray, DEFAULT_TMIN, DEFAULT_TMAX, temp_t, temp_hitPos, temp_hitNormal))
+		{
+			hasHitSomething = true;
+			if (temp_t < nearest_t)
+			{
+                temp_hitPlane=false;
+				if(i==0)
+					temp_hitMainSphere=true;
+				else
+					temp_hitMainSphere=false;
+				temp_hitPlanexy=false;
+				temp_hitPlaneyz=false;
+                nearest_t=temp_t;
+				nearest_hitPos = temp_hitPos;
+				nearest_hitNormal = temp_hitNormal;
+				nearest_hitMatID = Sphere[i].materialID;
+			}
+		}
+	}
+	for (int i = 0;i < NUM_PLANES;i++)
+	{
+		if (IntersectPlane(Plane[i], ray, DEFAULT_TMIN, DEFAULT_TMAX, temp_t, temp_hitPos, temp_hitNormal))
+		{
+			hasHitSomething = true;
+			if (temp_t < nearest_t)
+			{
+				if(i==0)
+				{
+					temp_hitPlane=true;
+					temp_hitPlanexy=false;
+					temp_hitPlaneyz=false;
+				}
+				else if(i==1||i==3)
+				{
+					temp_hitPlane=false;
+					temp_hitPlanexy=true;
+					temp_hitPlaneyz=false;
+				}
+				else if(i==2||i==4)
+				{
+					temp_hitPlane=false;
+					temp_hitPlanexy=false;
+					temp_hitPlaneyz=true;
+				}
+				temp_hitMainSphere=false;
+                nearest_t=temp_t;
+				nearest_hitPos = temp_hitPos;
+				nearest_hitNormal = temp_hitNormal;
+				nearest_hitMatID = Plane[i].materialID;
+			}
+		}
+	}
+    
+	/////////////////////////////////
+
+
+
+	// One of the output results.
+	hasHit = hasHitSomething;
+    
+	if (!hasHitSomething) return BACKGROUND_COLOR;
+
+	vec3 I_local = vec3(0.0);  // Result color will be accumulated here.
+	
+	/////////////////////////////////////////////////////////////////////////////
+	// TASK:
+	// * Accumulate lighting from each light source on the nearest hit point. 
+	//   They are all accumulated into I_local.
+	// * For each light source, make a shadow ray, and check if the shadow ray
+	//   intersects any of the objects (the planes and spheres) between the 
+	//   nearest hit point and the light source.
+	// * Then, call PhongLighting() to compute lighting for this light source.
+	/////////////////////////////////////////////////////////////////////////////
+
+	/////////////////////////////////
+	Ray_t shadowRay;
+	shadowRay.o = nearest_hitPos;
+	for (int i = 0;i < NUM_LIGHTS;i++)
+	{
+		shadowRay.d = normalize(Light[i].position - nearest_hitPos);
+		bool inshadow = false;
+		for (int j = 0;j < NUM_SPHERES;j++)
+		{
+			if (IntersectSphere(Sphere[j], shadowRay, DEFAULT_TMIN, DEFAULT_TMAX))
+				inshadow = true;
+		}
+        for (int i = 0;i < NUM_SPHERES;i++)
+		{
+			if (IntersectSphere(Sphere[i], shadowRay, DEFAULT_TMIN, DEFAULT_TMAX, temp_t, temp_hitPos, temp_hitNormal))
+			{
+				hasHitSomething = true;
+				if (temp_t < nearest_t)
+				{
+					if(i==0)
+						temp_hitMainSphere=true;
+					else
+						temp_hitMainSphere=false;
+					temp_hitPlane=false;
+					temp_hitPlanexy=false;
+					temp_hitPlaneyz=false;
+				}
+			}
+		}
+		for (int i = 0;i < NUM_PLANES;i++)
+		{
+			if (IntersectPlane(Plane[i], ray, DEFAULT_TMIN, DEFAULT_TMAX, temp_t, temp_hitPos, temp_hitNormal))
+			{
+				hasHitSomething = true;
+				if (temp_t < nearest_t)
+				{
+					if(i==0)
+					{
+						temp_hitPlane=true;
+						temp_hitPlanexy=false;
+						temp_hitPlaneyz=false;
+					}
+					else if(i==1||i==3)
+					{
+						temp_hitPlane=false;
+						temp_hitPlanexy=true;
+						temp_hitPlaneyz=false;
+					}
+					else if(i==2||i==4)
+					{
+						temp_hitPlane=false;
+						temp_hitPlanexy=false;
+						temp_hitPlaneyz=true;
+					}
+					temp_hitMainSphere=false;
+				}
+			}
+		}
+        hasHitPlane=temp_hitPlane;
+		hasHitMainSphere=temp_hitMainSphere;
+		hasHitPlanexy=temp_hitPlanexy;
+		hasHitPlaneyz=temp_hitPlaneyz;
+        if(!hasHitPlane&&!hasHitMainSphere&&!hasHitPlanexy&&!hasHitPlaneyz)
+		I_local += PhongLighting(shadowRay.d, nearest_hitNormal, normalize(reflect(shadowRay.d,nearest_hitNormal)), inshadow,Material[nearest_hitMatID], Light[i]);
+        else if(hasHitMainSphere)
+		{
+			float sphereAngle = -0.5 * iTime; 
+			vec3 color = vec3( 0 );
+			float sphereRadius = 1.0;
+			float t = RaySphere( ray.o, ray.d, Sphere[0].center, sphereRadius );
+			if ( t > 0.0 )
+			{
+				vec3 pos = ray.o + t * ray.d-Sphere[0].center;
+       
+				float tileSize 	= 0.12;        
+				vec2 phiTheta	= vec2( atan( pos.z, pos.x ) + sphereAngle, acos( pos.y / sphereRadius ) );
+				vec2 tileId 	= floor( phiTheta / tileSize );
+				vec2 tilePos	= ( phiTheta - tileId * tileSize ) / tileSize;
+				phiTheta		= tileId * tileSize;
+				phiTheta.x		= phiTheta.x - sphereAngle;
+        
+				vec2 edge = min( clamp( ( tilePos ) * 10.0, 0.0, 1.0 ), clamp( ( 1.0 - tilePos ) * 10.0, 0.0, 1.0 ) );       
+				float bump = clamp( min( edge.x, edge.y ), 0.0, 1.0 );
+        
+				vec3 bumpPos;
+				bumpPos.x = sphereRadius * sin( phiTheta.y ) * cos( phiTheta.x );
+				bumpPos.y = sphereRadius * cos( phiTheta.y );
+				bumpPos.z = sphereRadius * sin( phiTheta.y ) * sin( phiTheta.x );
+				bumpPos.y += ( 1.0 - bump ) * 0.1;
+			
+				vec3 normal = normalize( bumpPos );
+
+				vec3 refl = reflect( ray.d, normal );
+				color = texture( iChannel1, refl).xyz;
+				color = color * color;
+				color *= vec3( bump ) * 5.0;
+			}
+             
+             I_local+=Lighting(shadowRay.d, nearest_hitNormal, normalize(reflect(shadowRay.d,nearest_hitNormal)), inshadow,color, Light[i]);
+		}
+        else if(hasHitPlanexy||hasHitPlaneyz)
+		{
+			vec2 uv;
+			if(hasHitPlanexy)
+				uv = nearest_hitPos.xy/3.;
+			else if(hasHitPlaneyz)
+				uv = nearest_hitPos.yz/3.;
+   			uv*=5.;
+			float m=0.;
+			vec2 gv=fract(uv)-.5;
+			vec2 id=floor(uv);
+			vec2 p[9];
+			int i=0;
+			for(float y=-1.;y<=1.;y++)
+			{
+				for(float x=-1.;x<=1.;x++)
+				{
+					p[i++]=GetPos(id,vec2(x,y));
+				}
+			}
+			for(int i=0;i<9;i++)
+			{
+				vec2 j=(p[i]-gv)*20.;
+				float sparkle=1./dot(j,j);
+				m+=sparkle*(sin(iTime*10.+p[i].x*10.)*.5+.5);
+			}
+			vec3 color = vec3(m);
+			I_local+=Lighting(shadowRay.d, nearest_hitNormal, normalize(reflect(shadowRay.d,nearest_hitNormal)), inshadow, color, Light[i]);
+		}
+		else
+        {
+			vec2 uv = nearest_hitPos.xz/3.;
+   			uv*=5.;
+			float m=0.;
+			vec2 gv=fract(uv)-.5;
+			vec2 id=floor(uv);
+			vec2 p[9];
+			int i=0;
+			for(float y=-1.;y<=1.;y++)
+			{
+				for(float x=-1.;x<=1.;x++)
+				{
+					p[i++]=GetPos(id,vec2(x,y));
+				}
+			}
+			for(int i=0;i<9;i++)
+			{
+				m+=Line(gv,p[4],p[i]);
+				vec2 j=(p[i]-gv)*20.;
+				float sparkle=1./dot(j,j);
+				m+=sparkle*(sin(iTime*10.+p[i].x*10.)*.5+.5);
+			}
+			m+=Line(gv,p[1],p[3]);
+			m+=Line(gv,p[1],p[5]);
+			m+=Line(gv,p[7],p[3]);
+			m+=Line(gv,p[7],p[5]);
+			vec3 color = vec3(m);
+			I_local+=Lighting(shadowRay.d, nearest_hitNormal, normalize(reflect(shadowRay.d,nearest_hitNormal)), inshadow, color, Light[i]);
+        }
+        
+        
+    }
+    
+
+	/////////////////////////////////
+
+
+
+// Populate output results.
+	hitPos = nearest_hitPos;
+	hitNormal = nearest_hitNormal;
+	k_rg = Material[nearest_hitMatID].k_rg;
+
+	return I_local;
+}
+mat3 setCamera( in vec3 cam_pos, in vec3 com_lookat, in vec3 cam_up_vec)
+{
+    vec3 cz = normalize(com_lookat-cam_pos);
+	vec3 cx = normalize( cross(cam_up_vec,cz) );
+    vec3 cy = normalize( cross(cz,cx) );
+    return mat3( cx, cy, cz );
+}
+mat3 setCamera( in vec3 ro, in vec3 ta, float cr )
+{
+	vec3 cw = normalize(ta-ro);
+	vec3 cp = vec3(sin(cr), cos(cr),0.0);
+	vec3 cu = normalize( cross(cw,cp) );
+	vec3 cv = normalize( cross(cu,cw) );
+    return mat3( cu, cv, cw );
+}
+mat3 setLightPos(in vec3 ro,in vec3 ta,float cr)
+{
+    vec3 cw = normalize(ta-ro);
+	vec3 cp = vec3(sin(cr), cos(cr),0.0);
+	vec3 cu = normalize( cross(cw,cp) );
+	vec3 cv = normalize( cross(cu,cw) );
+    return mat3( cu, cv, cw );
+}
+
+
+
+/////////////////////////////////////////////////////////////////////////////
+// Execution of fragment shader starts here.
+// 1. Initializes the scene.
+// 2. Compute a primary ray for the current pixel (fragment).
+// 3. Trace ray into the scene with NUM_ITERATIONS recursion levels.
+/////////////////////////////////////////////////////////////////////////////
+void mainImage(out vec4 fragColor, in vec2 fragCoord)
+{
+	InitScene();
+
+	// Scale pixel 2D position such that its y coordinate is in [-1.0, 1.0].
+	vec2 pixel_pos = (2.0 * fragCoord.xy - iResolution.xy) / iResolution.y;
+	vec2 mo =iMouse.xy/iResolution.xy;
+    float time = 15.0+iTime;
+	// Position the camera.
+	//vec3 cam_pos = vec3(2.5, 1.0, 2.5);
+	//vec3 cam_lookat = vec3(0.25, 1.0, 0.0);
+	//vec3 cam_up_vec = vec3(0.0, 1.0, 0.0);
+	// Set up camera coordinate frame in world space.
+	//vec3 cam_z_axis = normalize(cam_pos - cam_lookat);
+	//vec3 cam_x_axis = normalize(cross(cam_up_vec, cam_z_axis));
+	//vec3 cam_y_axis = normalize(cross(cam_z_axis, cam_x_axis));
+ 	float d= 2.5*2.5+2.5*2.5;
+    vec3 com_pos=vec3(1.5*sqrt(d)*cos(0.1*time + 2.0*mo.x),3.5+2.0*mo.y,1.5*sqrt(d)*sin(0.1*time + 2.0*mo.x));
+    Light[0].position=com_pos;
+    vec3 com_lookat=vec3(0.25,1.0,0.0);
+    vec3 com_up_vec= vec3(0.0, 1.0, 0.0);
+    mat3 ca = setCamera( com_pos, com_lookat, 0.0 );
+    vec3 rd = ca* normalize( vec3(pixel_pos.xy,2.0) );
+    float t=4.0*4.0+6.0*6.0;
+    vec3 light_pos=vec3(1.5*sqrt(t)*cos(0.1*time + 2.0*mo.x),3.5+2.0*mo.y,1.5*sqrt(t)*sin(0.1*time + 2.0*mo.x));
+	// Create primary ray.
+	float pixel_pos_z = -1.0 / tan(FOVY / 2.0);
+	Ray_t pRay;
+	pRay.o = com_pos;
+	pRay.d = rd;
+
+	// Start Ray Tracing.
+	// Use iterations to emulate the recursion.
+
+	vec3 I_result = vec3(0.0);
+	vec3 compounded_k_rg = vec3(1.0);
+	Ray_t nextRay = pRay;
+
+	for (int level = 0; level <= NUM_ITERATIONS; level++)
+	{
+		bool hasHit;
+		vec3 hitPos, hitNormal, k_rg;
+
+		vec3 I_local = CastRay(nextRay, hasHit, hitPos, hitNormal, k_rg);
+
+		I_result += compounded_k_rg * I_local;
+
+		if (!hasHit) break;
+
+		compounded_k_rg *= k_rg;
+
+		nextRay = Ray_t(hitPos, normalize(reflect(nextRay.d, hitNormal)));
+	}
+
+	fragColor = vec4(I_result, 1.0);
+}
